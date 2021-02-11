@@ -1,0 +1,297 @@
+---
+title: "Forecasting KPIs"
+output: html_document
+---
+
+```{r}
+### ETS Model forecasting ###
+ets_models <- function(train_data,Frequency,Forecast_Periods,Value){
+  
+  Forecast_Data <- train_data # Data frame containing forecast data
+  Time_level <- Frequency # Time level of data (monthly=12, quarterly=4, daily=7)
+  Num_Periods <- Forecast_Periods # Number of time periods being forecast forward
+  
+  names(Forecast_Data)[names(Forecast_Data)=="Time"] <- "Forecast_Date" # Column containing date, MUST BE IN AS.YEARMON FORMAT 
+  names(Forecast_Data)[names(Forecast_Data)==Value] <- "Forecast_Value" # Column contatining values for forecasting
+  names(Forecast_Data)[names(Forecast_Data)=="Financials"] <- "Series_ID" # Column containing the unique series identifier
+  
+  Num_Series <- as.integer(length(unique(Forecast_Data$Series_ID)))
+  
+  # Generate ETS models 
+  
+  forecast_models <- setDT(Forecast_Data)[, list(ETS = list(ets(ts(`Forecast_Value`, start = min(`Forecast_Date`), frequency = Time_level), allow.multiplicative.trend = T)), 
+                                                 ID_List=list(rep(`Series_ID`,.N)), ID_List_Future=list(rep(`Series_ID`,Num_Periods))), by = `Series_ID`]
+  
+  
+  #Forecasting for ETS
+  forecast_models[, `:=` (ETS_Forecast = lapply(ETS, forecast, h=Num_Periods))]
+  
+  forecast_models[, `:=` (ETS_Forecast_Values = lapply(ETS_Forecast, unlist(`[`), c("mean", "method")))]
+  forecast_models[, `:=` (ETS_Future = lapply(ETS_Forecast_Values, `[[`, 1),
+                          ETS_Method = lapply(ETS_Forecast_Values, `[[`, 2))]
+  
+  #Forecast output for ETS
+  ETS_forecast_output <- data.frame(ID = unlist(forecast_models$ID_List_Future),
+                                    Date=as.matrix(unlist(lapply(forecast_models$ETS_Future,time))), 
+                                    ETS_Value = as.matrix(unlist(forecast_models$ETS_Future)),
+                                    ETS_Method = unlist(forecast_models$ETS_Method))
+  
+  forecast_models[, `:=` (ETS_Accuracy = lapply(ETS_Forecast, accuracy))]
+  forecast_models[, `:=` (ETS_RMSE = lapply(ETS_Accuracy, `[[`, 2))]
+  
+  ETS_RSME <- forecast_models[,c("Series_ID","ETS_RMSE")]
+  
+  #Handling the type compatible for key values
+  ETS_forecast_output$Date <- as.yearmon(ETS_forecast_output$Date)
+  #Joining the forcasted values and actual values
+  return(list(ETS_forecast_output,ETS_RSME))
+  
+}
+
+```
+
+```{r}
+### HOLT Model forecasting ###
+holt_models <- function(train_data,Frequency,Forecast_Periods,Value){
+  
+  Forecast_Data <- train_data # Data frame containing forecast data
+  Time_level <- Frequency # Time level of data (monthly=12, quarterly=4, daily=7)
+  Num_Periods <- Forecast_Periods # Number of time periods being forecast forward
+  
+  names(Forecast_Data)[names(Forecast_Data)=="Time"] <- "Forecast_Date" # Column containing date, MUST BE IN AS.YEARMON FORMAT 
+  names(Forecast_Data)[names(Forecast_Data)==Value] <- "Forecast_Value" # Column contatining values for forecasting
+  names(Forecast_Data)[names(Forecast_Data)=="Financials"] <- "Series_ID" # Column containing the unique series identifier
+  
+  Num_Series <- as.integer(length(unique(Forecast_Data$Series_ID)))
+  
+  # Generate HOLT models 
+  
+  forecast_models <- setDT(Forecast_Data)[, list(HOLT = list(HoltWinters(ts(`Forecast_Value`, start = min(`Forecast_Date`), frequency = Time_level))), 
+                                                 ID_List=list(rep(`Series_ID`,.N)), ID_List_Future=list(rep(`Series_ID`,Num_Periods))), by = `Series_ID`]
+  
+  
+  #Forecasting for HOLT
+  forecast_models[, `:=` (HOLT_Forecast = lapply(HOLT, forecast, h=Num_Periods))]
+  
+  forecast_models[, `:=` (HOLT_Forecast_Values = lapply(HOLT_Forecast, unlist(`[`), c("mean", "method")))]
+  forecast_models[, `:=` (HOLT_Future = lapply(HOLT_Forecast_Values, `[[`, 1),
+                          HOLT_Method = lapply(HOLT_Forecast_Values, `[[`, 2))]
+
+  forecast_models[, `:=` (HOLT_Accuracy = lapply(HOLT_Forecast, accuracy))]
+  forecast_models[, `:=` (HOLT_RMSE = lapply(HOLT_Accuracy, `[[`, 2))]
+  
+  HOLT_RSME <- forecast_models[,c("Series_ID","HOLT_RMSE")]
+  
+  #Forecast output for HOLT
+  HOLT_forecast_output <- data.frame(ID = unlist(forecast_models$ID_List_Future),
+                                    Date=as.matrix(unlist(lapply(forecast_models$HOLT_Future,time))), 
+                                    HOLT_Value = as.matrix(unlist(forecast_models$HOLT_Future)),
+                                    HOLT_Method = unlist(forecast_models$HOLT_Method))
+  
+  
+  #Handling the type compatible for key values
+  HOLT_forecast_output$Date <- as.yearmon(HOLT_forecast_output$Date)
+  #Joining the forcasted values and actual values
+  return(list(HOLT_forecast_output,HOLT_RSME))
+  
+}
+
+```
+
+
+```{r}
+
+#Defining the function that generates the ARIMA models
+arima_models <- function(train_data,Frequency,Forecast_Periods,Value){
+  
+  Forecast_Data <- train_data # Data frame containing forecast data
+  Time_level <- Frequency # Time level of data (monthly=12, quarterly=4, daily=7)
+  Num_Periods <- Forecast_Periods # Number of time periods being forecast forward
+  
+  names(Forecast_Data)[names(Forecast_Data)=="Time"] <- "Forecast_Date" # Column containing date, MUST BE IN AS.YEARMON FORMAT 
+  names(Forecast_Data)[names(Forecast_Data)==Value] <- "Forecast_Value" # Column contatining values for forecasting
+  names(Forecast_Data)[names(Forecast_Data)=="Financials"] <- "Series_ID" # Column containing the unique series identifier
+  
+  Num_Series <- as.integer(length(unique(Forecast_Data$Series_ID)))
+  
+  # Generate models 
+  forecast_models <- setDT(Forecast_Data)[, list(AR = list(auto.arima(ts(`Forecast_Value`, start = min(`Forecast_Date`), frequency = Time_level))), 
+                                                 ID_List=list(rep(`Series_ID`,.N)), ID_List_Future=list(rep(`Series_ID`,Num_Periods))), by = `Series_ID`]
+
+  
+  #Forecasting for ARIMA 
+  forecast_models[, `:=` (AR_Forecast = lapply(AR, forecast, h=Num_Periods))]
+  
+  forecast_models[, `:=` (AR_Forecast_Values = lapply(AR_Forecast, `[`, c("mean", "method")))]
+  forecast_models[, `:=` (AR_Future = lapply(AR_Forecast_Values, `[[`, 1),
+                          AR_Method = lapply(AR_Forecast_Values, `[[`, 2))]
+
+  forecast_models[, `:=` (ARIMA_Accuracy = lapply(AR_Forecast, accuracy))]
+  forecast_models[, `:=` (ARIMA_RMSE = lapply(ARIMA_Accuracy, `[[`, 2))]
+  
+  ARIMA_RSME <- forecast_models[,c("Series_ID","ARIMA_RMSE")]  
+
+  #Forecast output for ARIMA
+  AR_forecast_output <- data.frame(ID = unlist(forecast_models$ID_List_Future),
+                                   Date=as.matrix(unlist(lapply(forecast_models$AR_Future,time))), 
+                                   AR_Value = as.matrix(unlist(forecast_models$AR_Future)), 
+                                   AR_Method = unlist(forecast_models$AR_Method))
+  
+  
+  #Handling the type compatible for key values
+  AR_forecast_output$Date <- as.yearmon(AR_forecast_output$Date)
+  
+  return(list(AR_forecast_output,ARIMA_RSME))
+  
+}
+
+```
+
+
+
+```{r}
+
+#### Calling the ETS function ####
+Frequency <- 12 # Time level of the data (monthly = 12)
+
+#Forecasting for 12 months 
+start <- Sys.time()
+#Calling the ETS model generation function
+syr_ets_12 <- ets_models(syr2,Frequency,12,"Amount")
+end <- Sys.time()
+end-start
+
+#Splitting output
+syr_ets_12_forecast <- syr_ets_12[[1]]
+syr_ets_12_error <- as.data.frame(syr_ets_12[[2]])
+
+
+#Formatting syr_ets_12_forecast output
+names(syr_ets_12_forecast) <- c("Financials", "Time","ETS Amount","ETS Method")
+syr_ets_12_forecast$Time <- as.character(syr_ets_12_forecast$Time)
+sapply(syr_ets_12_forecast,class)
+dim(syr_ets_12_forecast)
+
+
+#Formatting syr_ets_12_forecast output
+names(syr_ets_12_error) <- c("Financials", "ETS Error")
+sapply(syr_ets_12_error,class)
+dim(syr_ets_12_error)
+
+View(syr_ets_12_forecast)
+View(syr_ets_12_error)
+```
+
+
+```{r}
+#### Calling the ARIMA function ####
+
+#Forecasting for 12 months 
+start <- Sys.time()
+#Calling the ETS model generation function
+syr_arima_12 <- arima_models(syr2,Frequency,12,"Amount")
+end <- Sys.time()
+end-start
+
+
+#Splitting output
+syr_arima_12_forecast <- syr_arima_12[[1]]
+syr_arima_12_error <- as.data.frame(syr_arima_12[[2]])
+
+#Formatting output
+names(syr_arima_12_forecast) <- c("Financials", "Time","ARIMA Amount","ARIMA Method")
+syr_arima_12_forecast$Time <- as.character(syr_arima_12_forecast$Time)
+sapply(syr_arima_12_forecast,class)
+dim(syr_arima_12_forecast)
+
+
+#Formatting syr_ets_12_forecast output
+names(syr_arima_12_error) <- c("Financials", "ARIMA Error")
+sapply(syr_arima_12_error,class)
+dim(syr_arima_12_error)
+
+View(syr_arima_12_forecast)
+View(syr_arima_12_error)
+```
+
+```{r}
+#### Calling the HOLT function ####
+
+#Forecasting for 12 months 
+start <- Sys.time()
+#Calling the ETS model generation function
+syr_holt_12 <- holt_models(syr2,Frequency,12,"Amount")
+end <- Sys.time()
+end-start
+
+
+#Splitting output
+syr_holt_12_forecast <- syr_holt_12[[1]]
+syr_holt_12_error <- as.data.frame(syr_holt_12[[2]])
+
+class(syr_holt_12_forecast)
+class(syr_holt_12_error)
+
+#Formatting output
+names(syr_holt_12_forecast) <- c("Financials", "Time","Holt Amount","Holt Method")
+syr_holt_12_forecast$Time <- as.character(syr_holt_12_forecast$Time)
+sapply(syr_holt_12_forecast,class)
+dim(syr_holt_12_forecast)
+
+#Formatting syr_ets_12_forecast output
+names(syr_holt_12_error) <- c("Financials", "HOLT Error")
+sapply(syr_holt_12_error,class)
+dim(syr_holt_12_error)
+
+View(syr_holt_12)
+View(syr_holt_12_forecast)
+```
+
+```{r}
+#Forming the output for all forecasts
+syr_12_tmp_forecast <-merge(syr_ets_12_forecast,syr_arima_12_forecast, by.x = c("Financials","Time"), by.y= c("Financials", "Time"))
+names(syr_12_tmp_forecast) <- c("Financials", "Time","ARIMA Amount","ARIMA Method","ETS Amount","ETS Method")
+
+syr_12_forecast <-merge(syr_12_tmp_forecast,syr_holt_12_forecast, by.x = c("Financials","Time"), by.y= c("Financials", "Time"))
+
+names(syr_12_forecast) <- c("Financials", "Time","ARIMA Amount","ARIMA Method","ETS Amount","ETS Method","Holt Amount","Holt Method")
+View(syr_12_forecast)
+sapply(syr_12_forecast,class)
+
+```
+
+
+```{r}
+#Forming the error statistics for all forecasts
+syr_12_tmp_error <-merge(syr_ets_12_error,syr_arima_12_error, by.x = c("Financials"), by.y= c("Financials"))
+names(syr_12_tmp) <- c("Financials","ARIMA Error","ETS Error")
+
+syr_12_error <-merge(syr_12_tmp_error,syr_holt_12_error, by.x = c("Financials"), by.y= c("Financials"))
+
+names(syr_12_error) <- c("Financials","ARIMA Error","ETS Error","HOLT Error")
+
+#Unlisting columns
+sapply(syr_12_error,class)
+syr_12_error$ARIMA_Error <-  unlist(syr_12_error$`ARIMA Error`)
+syr_12_error$ETS_Error <-  unlist(syr_12_error$`ETS Error`)
+syr_12_error$HOLT_Error <-  unlist(syr_12_error$`HOLT Error`)
+sapply(syr_12_error,class)
+
+
+#Selecting required columns
+syr_12_error <- syr_12_error[,c("Financials","ARIMA_Error","ETS_Error", "HOLT_Error")]
+
+View(syr_12_error)
+#View(syr_12_tmp_error)
+```
+
+```{r}
+
+#Finding the model with minimum error
+syr_12_error$Winner <-colnames(syr_12_error)[apply(syr_12_error,1,which.min)]
+
+#Finding the min error
+syr_12_error$min_error <- with(syr_12_error, pmin(ARIMA_Error, ETS_Error,HOLT_Error))
+
+View(syr_12_error)
+```
